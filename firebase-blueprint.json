@@ -1,0 +1,52 @@
+{
+  "entities": {
+    "TeamMember": {
+      "title": "TeamMember",
+      "description": "Anggota Tim Divisi Finance",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["Leader", "Anggota"] },
+        "position": { "type": "string" },
+        "email": { "type": "string" },
+        "avatarColor": { "type": "string" },
+        "photoUrl": { "type": "string" }
+      },
+      "required": ["id", "name", "role", "position", "email", "avatarColor"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Tugas harian, rutin, atau berulang Divisi Finance",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "assignedToId": { "type": "string" },
+        "assignedToName": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "dueTime": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "type": { "type": "string", "enum": ["Rutin", "Harian", "Berulang"] },
+        "recurrence": { "type": "object" },
+        "status": { "type": "string", "enum": ["Pending", "Selesai"] },
+        "completedAt": { "type": "string" },
+        "completedNotes": { "type": "string" },
+        "priority": { "type": "string", "enum": ["Rendah", "Sedang", "Tinggi"] }
+      },
+      "required": ["id", "title", "description", "assignedToId", "assignedToName", "dueDate", "type", "status", "priority"]
+    }
+  },
+  "firestore": {
+    "members/{memberId}": {
+      "schema": "TeamMember",
+      "description": "Collection of team members"
+    },
+    "tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Collection of tasks"
+    }
+  }
+}

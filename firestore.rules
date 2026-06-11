@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Safety Net Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // HELPER FUNCTIONS
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validations for Team Members
+    function isValidTeamMember(data) {
+      return data.id is string && data.id.size() <= 64 
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 150
+        && data.role is string && (data.role == 'Leader' || data.role == 'Anggota')
+        && data.position is string && data.position.size() <= 150
+        && data.email is string && data.email.size() <= 150
+        && data.avatarColor is string && data.avatarColor.size() <= 100
+        && (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 4000000));
+    }
+
+    // Validations for Tasks
+    function isValidTask(data) {
+      return data.id is string && data.id.size() <= 64
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 200
+        && data.description is string && data.description.size() <= 2000
+        && data.assignedToId is string && data.assignedToId.size() <= 64
+        && data.assignedToName is string && data.assignedToName.size() <= 150
+        && data.dueDate is string && data.dueDate.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && (!('dueTime' in data) || (data.dueTime is string && data.dueTime.matches('^\\d{2}:\\d{2}$')))
+        && (!('startTime' in data) || (data.startTime is string && data.startTime.matches('^\\d{2}:\\d{2}$')))
+        && (!('endTime' in data) || (data.endTime is string && data.endTime.matches('^\\d{2}:\\d{2}$')))
+        && data.type is string && (data.type == 'Rutin' || data.type == 'Harian' || data.type == 'Berulang')
+        && data.status is string && (data.status == 'Pending' || data.status == 'Selesai')
+        && (!('completedAt' in data) || (data.completedAt is string && data.completedAt.size() <= 50))
+        && (!('completedNotes' in data) || (data.completedNotes is string && data.completedNotes.size() <= 1000))
+        && data.priority is string && (data.priority == 'Rendah' || data.priority == 'Sedang' || data.priority == 'Tinggi');
+    }
+
+    // MEMBERS PATH RULES
+    match /members/{memberId} {
+      allow get: if isValidId(memberId);
+      allow list: if true;
+      allow create: if isValidId(memberId) && isValidTeamMember(incoming()) && incoming().id == memberId;
+      allow update: if isValidId(memberId) && isValidTeamMember(incoming()) && incoming().id == existing().id;
+      allow delete: if isValidId(memberId);
+    }
+
+    // TASKS PATH RULES
+    match /tasks/{taskId} {
+      allow get: if isValidId(taskId);
+      allow list: if true;
+      allow create: if isValidId(taskId) && isValidTask(incoming()) && incoming().id == taskId;
+      allow update: if isValidId(taskId) && isValidTask(incoming()) && incoming().id == existing().id;
+      allow delete: if isValidId(taskId);
+    }
+  }
+}

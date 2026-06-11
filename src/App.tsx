@@ -12,29 +12,15 @@ import TeamBoard from './components/TeamBoard';
 import RoleSelector from './components/RoleSelector';
 import WelcomePortal from './components/WelcomePortal';
 
+import { 
+  collection, doc, setDoc, deleteDoc, onSnapshot, writeBatch
+} from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from './lib/firebase';
+
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
-  
-  // State members with local storage loader
-  const [members, setMembers] = useState<TeamMember[]>(() => {
-    const cached = localStorage.getItem('monitoring_members_list');
-    if (cached) {
-      try {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) {}
-    }
-    return INITIAL_MEMBERS;
-  });
-
-  const [activeMember, setActiveMember] = useState<TeamMember>(() => {
-    const cachedActiveId = localStorage.getItem('monitoring_active_member_id');
-    if (cachedActiveId) {
-      const found = members.find(m => m.id === cachedActiveId);
-      if (found) return found;
-    }
-    return members[0] || INITIAL_MEMBERS[0];
-  });
+  const [members, setMembers] = useState<TeamMember[]>(INITIAL_MEMBERS);
+  const [activeMember, setActiveMember] = useState<TeamMember>(INITIAL_MEMBERS[0]);
 
   const [selectedDate, setSelectedDate] = useState<string>('2026-06-06'); // Initial target mock day
   const [systemNotification, setSystemNotification] = useState<string | null>(null);
@@ -52,9 +38,82 @@ export default function App() {
     }
   }, [reallocateTask]);
 
+  // Load members from Firestore with seed
   useEffect(() => {
-    localStorage.setItem('monitoring_members_list', JSON.stringify(members));
-  }, [members]);
+    const membersRef = collection(db, 'members');
+    const unsubscribe = onSnapshot(membersRef, (snapshot) => {
+      if (snapshot.empty) {
+        const seedMembers = async () => {
+          try {
+            const batch = writeBatch(db);
+            INITIAL_MEMBERS.forEach((m) => {
+              const dRef = doc(db, 'members', m.id);
+              batch.set(dRef, m);
+            });
+            await batch.commit();
+          } catch (e) {
+            console.error("Seeding members failed:", e);
+          }
+        };
+        seedMembers();
+      } else {
+        const list: TeamMember[] = [];
+        snapshot.forEach((d) => {
+          list.push(d.data() as TeamMember);
+        });
+        setMembers(list);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'members');
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Load tasks from Firestore with seed
+  useEffect(() => {
+    const tasksRef = collection(db, 'tasks');
+    const unsubscribe = onSnapshot(tasksRef, (snapshot) => {
+      if (snapshot.empty) {
+        const seedTasks = async () => {
+          try {
+            const batch = writeBatch(db);
+            INITIAL_TASKS.forEach((t) => {
+              const dRef = doc(db, 'tasks', t.id);
+              batch.set(dRef, t);
+            });
+            await batch.commit();
+          } catch (e) {
+            console.error("Seeding tasks failed:", e);
+          }
+        };
+        seedTasks();
+      } else {
+        const list: Task[] = [];
+        snapshot.forEach((d) => {
+          list.push(d.data() as Task);
+        });
+        setTasks(list);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'tasks');
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Update active member when members collection changes or loads
+  useEffect(() => {
+    if (members.length > 0) {
+      const cachedActiveId = localStorage.getItem('monitoring_active_member_id');
+      const found = members.find(m => m.id === cachedActiveId);
+      if (found) {
+        setActiveMember(found);
+      } else if (!members.some(m => m.id === activeMember.id)) {
+        setActiveMember(members[0]);
+      }
+    }
+  }, [members, activeMember]);
 
   useEffect(() => {
     if (activeMember) {
@@ -85,27 +144,6 @@ export default function App() {
     }
   }, [theme]);
 
-  // Load from local storage on mount
-  useEffect(() => {
-    const cachedTasks = localStorage.getItem('monitoring_tasks_list');
-    if (cachedTasks) {
-      try {
-        setTasks(JSON.parse(cachedTasks));
-      } catch (e) {
-        setTasks(INITIAL_TASKS);
-      }
-    } else {
-      setTasks(INITIAL_TASKS);
-      localStorage.setItem('monitoring_tasks_list', JSON.stringify(INITIAL_TASKS));
-    }
-  }, []);
-
-  // Save to local storage whenever tasks updates
-  const updateTasksStateAndCache = (newTasksList: Task[]) => {
-    setTasks(newTasksList);
-    localStorage.setItem('monitoring_tasks_list', JSON.stringify(newTasksList));
-  };
-
   // Helper trigger to parse day of the week safely avoiding UTC timezone drifts
   const isTaskActiveOnDate = (task: Task, dateStr: string): boolean => {
     if (task.type === 'Harian' || task.type === 'Rutin') {
@@ -128,36 +166,75 @@ export default function App() {
     return false;
   };
 
+  // Helper to clean task payloads before Firestore upload to adhere strictly to schema
+  const cleanTaskPayload = (task: Task): any => {
+    const clean: any = {
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      assignedToId: task.assignedToId,
+      assignedToName: task.assignedToName,
+      dueDate: task.dueDate,
+      type: task.type,
+      status: task.status,
+      priority: task.priority
+    };
+    if (task.dueTime !== undefined) clean.dueTime = task.dueTime;
+    if (task.startTime !== undefined) clean.startTime = task.startTime;
+    if (task.endTime !== undefined) clean.endTime = task.endTime;
+    if (task.recurrence !== undefined) {
+      clean.recurrence = {
+        days: task.recurrence.days,
+        intervalText: task.recurrence.intervalText || ''
+      };
+    }
+    if (task.completedAt !== undefined && task.completedAt !== null) {
+      clean.completedAt = task.completedAt;
+    }
+    if (task.completedNotes !== undefined && task.completedNotes !== null) {
+      clean.completedNotes = task.completedNotes;
+    }
+    return clean;
+  };
+
   // Add a new task (by Leader & Tim)
-  const handleAddTask = (newTask: Task) => {
+  const handleAddTask = async (newTask: Task) => {
     const duplicate = tasks.find(t => t.dueDate === newTask.dueDate && t.startTime === newTask.startTime && t.endTime === newTask.endTime);
     if (duplicate) {
       triggerNotification(`Gagal! Jam kerja ${newTask.startTime} - ${newTask.endTime} sudah terisi.`);
       return false;
     }
-    const updated = [newTask, ...tasks];
-    updateTasksStateAndCache(updated);
     
-    // Trigger success flash
-    triggerNotification(`Sukses menjadwalkan tugas: "${newTask.title}" untuk ${newTask.assignedToName}`);
-    return true;
+    try {
+      const cleanPayload = cleanTaskPayload(newTask);
+      await setDoc(doc(db, 'tasks', newTask.id), cleanPayload);
+      triggerNotification(`Sukses menjadwalkan tugas: "${newTask.title}" untuk ${newTask.assignedToName}`);
+      return true;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `tasks/${newTask.id}`);
+    }
   };
 
   // Edit an existing task
-  const handleEditTask = (updatedTask: Task) => {
+  const handleEditTask = async (updatedTask: Task) => {
     const duplicate = tasks.find(t => t.id !== updatedTask.id && t.dueDate === updatedTask.dueDate && t.startTime === updatedTask.startTime && t.endTime === updatedTask.endTime);
     if (duplicate) {
       alert(`Gagal menyimpan! Sudah ada tugas lain ("${duplicate.title}") pada Hari (${updatedTask.dueDate}) dan Jam Kerja (${updatedTask.startTime} - ${updatedTask.endTime}) yang sama.`);
       return false;
     }
-    const updated = tasks.map(t => t.id === updatedTask.id ? { ...updatedTask, dueTime: updatedTask.endTime } : t);
-    updateTasksStateAndCache(updated);
-    triggerNotification(`Tugas "${updatedTask.title}" berhasil diperbarui.`);
-    return true;
+    
+    try {
+      const cleanPayload = cleanTaskPayload({ ...updatedTask, dueTime: updatedTask.endTime });
+      await setDoc(doc(db, 'tasks', updatedTask.id), cleanPayload);
+      triggerNotification(`Tugas "${updatedTask.title}" berhasil diperbarui.`);
+      return true;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `tasks/${updatedTask.id}`);
+    }
   };
 
   // Reallocate or reschedule time for a pending task
-  const handleReallocateTime = (taskId: string, targetDateStr: string, targetTimeStr: string) => {
+  const handleReallocateTime = async (taskId: string, targetDateStr: string, targetTimeStr: string) => {
     const taskToUpdate = tasks.find(t => t.id === taskId);
     if (!taskToUpdate) return false;
 
@@ -172,97 +249,127 @@ export default function App() {
       return false;
     }
 
-    const updated = tasks.map(t => t.id === taskId ? { 
-      ...t, 
-      dueDate: targetDateStr, 
-      dueTime: targetTimeStr 
-    } : t);
-    
-    updateTasksStateAndCache(updated);
-    triggerNotification(`Jam tugas "${taskToUpdate.title}" dialihkan ke pukul ${targetTimeStr} WIB pada tanggal ${targetDateStr}.`);
-    return true;
+    try {
+      const updatedTask = { 
+        ...taskToUpdate, 
+        dueDate: targetDateStr, 
+        dueTime: targetTimeStr 
+      };
+      const cleanPayload = cleanTaskPayload(updatedTask);
+      await setDoc(doc(db, 'tasks', taskId), cleanPayload);
+      triggerNotification(`Jam tugas "${taskToUpdate.title}" dialihkan ke pukul ${targetTimeStr} WIB pada tanggal ${targetDateStr}.`);
+      return true;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `tasks/${taskId}`);
+    }
   };
 
   // Delete a task (by Leader)
-  const handleDeleteTask = (taskId: string) => {
+  const handleDeleteTask = async (taskId: string) => {
     const taskToDelete = tasks.find(t => t.id === taskId);
-    const updated = tasks.filter(t => t.id !== taskId);
-    updateTasksStateAndCache(updated);
-
-    if (taskToDelete) {
-      triggerNotification(`Tugas "${taskToDelete.title}" telah dihapus.`);
+    try {
+      await deleteDoc(doc(db, 'tasks', taskId));
+      if (taskToDelete) {
+        triggerNotification(`Tugas "${taskToDelete.title}" telah dihapus.`);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `tasks/${taskId}`);
     }
   };
 
   // Toggle status (from Pending to Selesai with optional completion notes)
-  const handleToggleStatus = (taskId: string, notes?: string) => {
+  const handleToggleStatus = async (taskId: string, notes?: string) => {
     const targetTask = tasks.find(t => t.id === taskId);
-    if (targetTask) {
-      const now = new Date();
-      const currentYear = now.getFullYear();
-      const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
-      const currentDay = String(now.getDate()).padStart(2, '0');
-      const currentDateStr = `${currentYear}-${currentMonth}-${currentDay}`;
-      const currentHours = now.getHours();
+    if (!targetTask) return;
 
-      const isPastDay = currentDateStr > targetTask.dueDate;
-      const isTodayPast9PM = currentDateStr === targetTask.dueDate && currentHours >= 21;
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+    const currentDay = String(now.getDate()).padStart(2, '0');
+    const currentDateStr = `${currentYear}-${currentMonth}-${currentDay}`;
+    const currentHours = now.getHours();
 
-      if (isPastDay || isTodayPast9PM) {
-        triggerNotification(`Gagal! Batas waktu checklist harian tugas ini telah melewati pukul 21:00 WIB pada hari target (${targetTask.dueDate}).`);
-        return;
-      }
+    const isPastDay = currentDateStr > targetTask.dueDate;
+    const isTodayPast9PM = currentDateStr === targetTask.dueDate && currentHours >= 21;
+
+    if (isPastDay || isTodayPast9PM) {
+      triggerNotification(`Gagal! Batas waktu checklist harian tugas ini telah melewati pukul 21:00 WIB pada hari target (${targetTask.dueDate}).`);
+      return;
     }
 
-    const updated = tasks.map(t => {
-      if (t.id === taskId) {
-        const isDone = t.status === 'Selesai';
-        const now = new Date();
-        const formattedTimestamp = `2026-06-06 ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-        
-        return {
-          ...t,
-          status: isDone ? 'Pending' as const : 'Selesai' as const,
-          completedAt: isDone ? undefined : formattedTimestamp,
-          completedNotes: isDone ? undefined : (notes || 'Tugas selesai diverifikasi oleh tim.')
-        };
-      }
-      return t;
-    });
+    const isDone = targetTask.status === 'Selesai';
+    const formattedTimestamp = `2026-06-06 ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    
+    const updatedTask: Task = {
+      ...targetTask,
+      status: isDone ? 'Pending' as const : 'Selesai' as const,
+      completedAt: isDone ? undefined : formattedTimestamp,
+      completedNotes: isDone ? undefined : (notes || 'Tugas selesai diverifikasi oleh tim.')
+    };
 
-    updateTasksStateAndCache(updated);
-    triggerNotification('Status tugas berhasil diperbarui!');
+    try {
+      const cleanPayload = cleanTaskPayload(updatedTask);
+      await setDoc(doc(db, 'tasks', taskId), cleanPayload);
+      triggerNotification('Status tugas berhasil diperbarui!');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `tasks/${taskId}`);
+    }
   };
 
   // Add a new team member
-  const handleAddMember = (newMember: TeamMember) => {
-    setMembers(prev => [...prev, newMember]);
-    triggerNotification(`Anggota tim "${newMember.name}" berhasil ditambahkan!`);
+  const handleAddMember = async (newMember: TeamMember) => {
+    try {
+      await setDoc(doc(db, 'members', newMember.id), newMember);
+      triggerNotification(`Anggota tim "${newMember.name}" berhasil ditambahkan!`);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `members/${newMember.id}`);
+    }
   };
 
   // Delete a team member
-  const handleDeleteMember = (memberId: string) => {
+  const handleDeleteMember = async (memberId: string) => {
     const toDelete = members.find(m => m.id === memberId);
     if (!toDelete) return;
-    setMembers(prev => prev.filter(m => m.id !== memberId));
-    
-    // Fallback if deleting active member
-    if (activeMember.id === memberId) {
-      const remaining = members.filter(m => m.id !== memberId);
-      if (remaining.length > 0) {
-        setActiveMember(remaining[0]);
+
+    try {
+      await deleteDoc(doc(db, 'members', memberId));
+      
+      // Fallback if deleting active member
+      if (activeMember.id === memberId) {
+        const remaining = members.filter(m => m.id !== memberId);
+        if (remaining.length > 0) {
+          setActiveMember(remaining[0]);
+        }
       }
+      triggerNotification(`Anggota "${toDelete.name}" berhasil dihilangkan dari tim.`);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `members/${memberId}`);
     }
-    triggerNotification(`Anggota "${toDelete.name}" berhasil dihilangkan dari tim.`);
   };
 
   // Edit an existing team member
-  const handleEditMember = (updatedMember: TeamMember) => {
-    setMembers(prev => prev.map(m => m.id === updatedMember.id ? updatedMember : m));
-    if (activeMember.id === updatedMember.id) {
-      setActiveMember(updatedMember);
+  const handleEditMember = async (updatedMember: TeamMember) => {
+    const cleanMember: any = {
+      id: updatedMember.id,
+      name: updatedMember.name,
+      role: updatedMember.role,
+      position: updatedMember.position,
+      email: updatedMember.email,
+      avatarColor: updatedMember.avatarColor
+    };
+    if (updatedMember.photoUrl !== undefined) {
+      cleanMember.photoUrl = updatedMember.photoUrl;
     }
-    triggerNotification(`Profil "${updatedMember.name}" berhasil diperbarui.`);
+
+    try {
+      await setDoc(doc(db, 'members', updatedMember.id), cleanMember);
+      if (activeMember.id === updatedMember.id) {
+        setActiveMember(updatedMember);
+      }
+      triggerNotification(`Profil "${updatedMember.name}" berhasil diperbarui.`);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `members/${updatedMember.id}`);
+    }
   };
 
   const triggerNotification = (msg: string) => {
@@ -285,7 +392,7 @@ export default function App() {
   if (!isEntered) {
     return (
       <WelcomePortal
-        members={members}
+        members={members.length > 0 ? members : INITIAL_MEMBERS}
         activeMember={activeMember}
         onSelectMember={(mb) => {
           setActiveMember(mb);
@@ -596,10 +703,10 @@ export default function App() {
               </button>
             </div>
 
-            <form onSubmit={(e) => {
+            <form onSubmit={async (e) => {
               e.preventDefault();
               if (!editingTask.title.trim()) return;
-              const success = handleEditTask(editingTask);
+              const success = await handleEditTask(editingTask);
               if (success !== false) {
                 setEditingTask(null);
               }
@@ -755,9 +862,9 @@ export default function App() {
               <span className="block text-[9px] text-slate-400 font-mono mt-1">PJ: {reallocateTask.assignedToName} | Saat ini: {reallocateTask.dueDate} {reallocateTask.dueTime ? `Pukul ${reallocateTask.dueTime}` : ''} WIB</span>
             </div>
 
-            <form onSubmit={(e) => {
+            <form onSubmit={async (e) => {
               e.preventDefault();
-              const ok = handleReallocateTime(reallocateTask.id, reallocateDate, reallocateTime);
+              const ok = await handleReallocateTime(reallocateTask.id, reallocateDate, reallocateTime);
               if (ok) {
                 setReallocateTask(null);
               }
