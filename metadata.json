@@ -1,0 +1,6 @@
+{
+  "name": "Task Flow Divisi Finance",
+  "description": "Aplikasi Task Flow interaktif untuk Pemimpin dan Tim Divisi Finance dengan Pemantauan Real-time, Checklist Harian terbatas maksimal pukul 21:00, dan Pengingat Kegiatan Rutin.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
