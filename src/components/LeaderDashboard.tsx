@@ -54,6 +54,7 @@ export default function LeaderDashboard({
   const [activeTab, setActiveTab] = useState<'progress' | 'manage'>('progress');
   const [isAddingMember, setIsAddingMember] = useState(false);
   const [editingMember, setEditingMember] = useState<TeamMember | null>(null);
+  const [memberToDeleteId, setMemberToDeleteId] = useState<string | null>(null);
 
   // New Member Fields
   const [newMemberName, setNewMemberName] = useState('');
@@ -921,25 +922,48 @@ export default function LeaderDashboard({
                           </div>
 
                           <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => handleStartEditMember(mb)}
-                              className="text-xs font-black px-3 py-1.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-650 rounded-lg cursor-pointer transition uppercase"
-                            >
-                              Edit
-                            </button>
-                            {!isLeader && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (onDeleteMember) {
-                                    onDeleteMember(mb.id);
-                                  }
-                                }}
-                                className="text-xs font-black px-3 py-1.5 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-650 rounded-lg cursor-pointer transition uppercase"
-                              >
-                                Hapus
-                              </button>
+                            {memberToDeleteId === mb.id ? (
+                              <div className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 p-1 rounded-lg">
+                                <span className="text-[10px] text-rose-700 font-extrabold px-1">Yakin hapus?</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (onDeleteMember) {
+                                      onDeleteMember(mb.id);
+                                    }
+                                    setMemberToDeleteId(null);
+                                  }}
+                                  className="text-[10px] font-black px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded cursor-pointer transition uppercase"
+                                >
+                                  Ya
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setMemberToDeleteId(null)}
+                                  className="text-[10px] font-black px-2.5 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded cursor-pointer transition uppercase"
+                                >
+                                  Batal
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditMember(mb)}
+                                  className="text-xs font-black px-3 py-1.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-650 rounded-lg cursor-pointer transition uppercase"
+                                >
+                                  Edit
+                                </button>
+                                {!isLeader && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setMemberToDeleteId(mb.id)}
+                                    className="text-xs font-black px-3 py-1.5 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-650 rounded-lg cursor-pointer transition uppercase"
+                                  >
+                                    Hapus
+                                  </button>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>
